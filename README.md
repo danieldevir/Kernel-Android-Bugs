@@ -194,5 +194,5 @@ If I can find bugs with a 2‑GB RAM laptop, so can you.
 **Stay curious. Stay kind.**
 
 — **Daniel Baradaran**  
-🔗 [GitHub](https://github.com/danialcodes) · 
+🔗 [GitHub](https://github.com/danieldevir) · 
 📧 daniel.ir.dev@gmail.com

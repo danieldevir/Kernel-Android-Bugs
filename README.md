@@ -1,198 +1,108 @@
-# 🦁 Daniel Baradaran – Vulnerability Research & Bug Bounty Portfolio
+# 🎮 SUP Game Box 400-in-1 – Reverse Engineering Project
 
-> *11 years old | Self‑taught security researcher | Kernel & OS internals*
-
----
-
-## 📌 About Me
-
-I’m an 11‑year‑old security researcher from Iran.  
-I started programming at 8, and today I focus on **static analysis** of the Android, iOS (XNU), and Qualcomm kernels.
-
-- 🧠 **IQ:** 137  
-- 💻 **Tools:** `grep`, `Coccinelle`, `nano`, Termux, `adb`  
-- ⚙️ **Hardware:** 15‑year‑old laptop (2 GB RAM) + 12‑year‑old phone (Sony Xperia Z2)  
-
-All my work is done with minimal resources – proving that you don’t need expensive gear to find serious vulnerabilities.
+> *Dumping, Analyzing & Customizing the ROM of a Retro Handheld Console*
 
 ---
 
-## 🔥 Key Achievements
+## 📌 Project Overview
 
-| Vendor | Status | Priority / Severity |
-|--------|--------|---------------------|
-| **Google (Android)** | ✅ Assigned, waiting for CVE | P2 / S2 |
-| **Apple (XNU)** | ⏳ Under review | – |
-| **Qualcomm** | ✅ Acknowledged (QPSIIR‑2072) | – |
-
-> I have submitted **multiple valid vulnerabilities** to Google, Apple, and Qualcomm.  
-> This page lists them with technical details, PoC code, and fixes.
+Hello! I'm **Daniel**, an 11‑year‑old security researcher and reverse engineer.  
+This project is my journey to **dump the original ROM** of the **SUP Game Box 400-in-1** console, analyze its structure, and eventually create a **custom firmware** with my favorite games.
 
 ---
 
-## 🎯 1. Google Android – Negative Array Index in `vchiq_debugfs.c`
+## 🧠 About the Console
 
-**Status:** ✅ **Assigned & waiting for CVE**  
-**Priority:** P2 | **Severity:** S2  
-**Issue Tracker:** [#525341492](https://issuetracker.google.com/issues/525341492)
+The **SUP Game Box 400-in-1** is an inexpensive handheld gaming device that includes 400 built‑in games (many of them duplicates).  
+It uses a special architecture called **OneBus**, which is essentially a clone of the classic NES (Famicom) architecture.
 
-### Vulnerability
-A negative array index bug exists in the debugfs write handler.
+### 🔍 Technical Specifications
 
-**File:** `drivers/staging/vc04_services/interface/vchiq_arm/vchiq_debugfs.c`
-
-**Vulnerable Code:**
-```c
-char kbuf[DEBUGFS_WRITE_BUF_SIZE + 1];
-...
-if (copy_from_user(kbuf, buffer, count))
-    return -EFAULT;
-kbuf[count - 1] = 0;   // ❌ if count == 0 → kbuf[-1]
-```
-
-If a user writes `count = 0` to `/sys/kernel/debug/vchiq/log_level`, the kernel accesses `kbuf[-1]`, causing an out‑of‑bounds write → kernel panic.
-
-**Exploit (PoC):**
-```c
-int fd = open("/sys/kernel/debug/vchiq/log_level", O_WRONLY);
-write(fd, "", 0);   // count = 0
-close(fd);
-```
-
-**Proposed Fix:**
-```c
-if (count == 0)
-    return -EINVAL;
-kbuf[count - 1] = 0;
-```
+| Component | Details |
+|-----------|---------|
+| **Processor** | NOAC (NES-on-a-Chip) – hidden under epoxy blob |
+| **Memory Chipset** | STMicroelectronics **M36L0T7050** (16 MB Flash + 4 MB PSRAM) |
+| **Display** | TFT screen (model varies, I identified **GC9306**) |
 
 ---
 
-## 📱 2. Apple (XNU) – Buffer Overflow in `IOSharedDataQueue::enqueue()`
+## 📄 Datasheet Reference
 
-**Status:** ⏳ Closed (reopen with PoC)  
-**Report ID:** OE110646826475
+> Below is the **pinout diagram** of the M36L0T7050 chipset, which is essential for understanding how to interface with the memory:
 
-### Vulnerability
-`IOSharedDataQueue::enqueue()` uses `_nochkmemcpy` without validating the `dataSize` from userspace.
+![M36L0T7050 Pinout](DataSheet.jpg)
 
-**Vulnerable Code:**
-```cpp
-void IOSharedDataQueue::enqueue(void *data, uint32_t dataSize) {
-    ...
-    _nochkmemcpy(dest, data, dataSize);   // ❌ no bounds check
-}
-```
-
-If `dataSize` is `0xFFFFFFFF` or `-1`, the copy operation writes past the allocated buffer.
-
-**Expected Impact:** Kernel panic or memory corruption.
-
-**Apple’s Response:**  
-They require a **crash log** from a current build.  
-Since I don’t have a Mac/iOS device, the report is closed – but the bug exists.
+*This image shows the pin mapping used to connect the chipset to the Arduino for dumping.*
 
 ---
 
-## 🧠 3. Apple (XNU) – TOCTOU / Double Fetch in `ipc_kmsg.c`
+## 🛠️ My Journey So Far
 
-**Status:** ⏳ Under review  
-**Report ID:** OE11064689512918
+### 🔌 Step 1 – USB Discovery
+Unlike others, I didn't open the console first. I inspected the **USB socket** and discovered that its pins are connected to both the memory chipset and the processor.  
+This means the USB port is **not just for charging** – it has a hidden data path!
 
-### Vulnerability
-The kernel fetches the same userspace value twice, allowing a race condition.
+Using an **Arduino Nano** and a cut USB cable, I started sending data and... **Mario jumped!**  
+I could control the console via USB!
 
-**Affected File:** `osfmk/ipc/ipc_kmsg.c`
+### ⚡ Step 2 – The Big Challenge
+Although I could send data, **receiving data** from the console was difficult.  
+I realized the console only sends a signal at boot time and then disconnects.  
+So, to dump the ROM, I had to send the **right commands** at the **right moment**.
 
-**Flow:**
-1. First fetch (line 2980): reads `descriptor_count`
-2. Malicious thread modifies the value
-3. Second fetch (line 3018): uses the changed value
-
-This is the same pattern as **CVE-2021-30955** (TOCTOU in `mach_msg`).
-
-**Impact:** Kernel memory corruption / code execution.
-
----
-
-## 🎧 4. Qualcomm – Deadlock in `q6apm.c` (Android 14 & 15)
-
-**Status:** ✅ **Acknowledged** (QPSIIR‑2072)  
-**Ticket:** QPSIIR‑2072
-
-### Vulnerability
-`q6apm_graph_alloc()` locks `apm->lock` **after** the error path, so if `audioreach_alloc_graph_pkt()` fails, the function returns without ever releasing the lock – causing a permanent deadlock.
-
-**File:** `sound/soc/qcom/qdsp6/q6apm.c`
-
-**Vulnerable Code:**
-```c
-graph->graph = audioreach_alloc_graph_pkt(apm, info);
-if (IS_ERR(graph->graph)) {
-    kfree(graph);
-    return ERR_CAST(err);          // ❌ lock never acquired → logical deadlock
-}
-mutex_lock(&apm->lock);            // Only reached if no error
-```
-
-**Fix:**
-Move the lock **before** the allocation and error path.
+### 🔧 Step 3 – Opening the Console
+After many trials with USB, I decided to **open the console** and access the memory chipset directly.  
+With the help of a professional repairman, I safely removed the **M36L0T7050** chipset from the board using **ChipQuik** alloy.
 
 ---
 
-## 🧪 5. Google Android – Multiple Bugs in `atomisp` (Staging Driver)
+## 📊 Challenges Faced
 
-**Status:** ✅ Submitted (awaiting review)  
-**Type:** Integer overflow + missing error checks
-
-### Findings in `drivers/staging/media/atomisp/pci/sh_css_params.c`
-
-| Bug | Description |
-|-----|-------------|
-| **Integer overflow** | `height * width` overflows to 0 before `kvmalloc()` |
-| **Missing NULL check** | `coordinates_x[i]` / `coordinates_y[i]` are not checked after allocation |
-| **NULL return** | Function returns `NULL` instead of `-ENOMEM` on error |
+| Challenge | Solution / Status |
+|-----------|-------------------|
+| Finding the datasheet | ✅ Found the complete M36L0T7050 datasheet |
+| USB communication | ✅ Proved USB is a hidden data path |
+| Receiving data at boot | ⏳ Need to send precise commands at boot time |
+| Removing the chipset | ✅ Done – safely removed with ChipQuik |
+| SOP‑44 to DIP adapter | ⏳ Need to get or build one to connect to Arduino |
 
 ---
 
-## 🛠️ Methodology
+## 📋 My Plan for the Future
 
-I use **static source‑code analysis** with:
-
-```bash
-grep -r --include="*.c" -B 5 -A 10 "copy_from_user" drivers/
-coccinelle --sp-file kmalloc_check.cocci --dir . --no-includes
-```
-
-My workflow:
-1. Download latest kernel (`android-mainline`, `XNU`, `Qualcomm` MSM)
-2. Search for dangerous patterns (`copy_from_user`, `kmalloc` without NULL checks, `mutex_lock` / `unlock` imbalances)
-3. Manually verify every finding with `nano` and full context
-4. Write a report with PoC and fix, then submit via official VRP channels
+1. **Get a SOP‑44 to DIP adapter** (or build one using a breadboard and wires)
+2. **Connect the chipset to Arduino** and take a full 16 MB dump
+3. **Analyze the dump** with a hex editor to find game and menu structures
+4. **Create a custom ROM** with my favorite games (like Goal 3, Super Mario Bros 3, etc.)
+5. **Write (Flash) the new ROM** back to the chipset
+6. **Reinstall the chipset** onto the board with the help of a repairman
 
 ---
 
-## 🏆 Summary
+## 💡 What I've Learned
 
-| Company | Bug Type | Status |
-|---------|----------|--------|
-| Google Android | Negative array index | ✅ Assigned – CVE in progress |
-| Apple XNU | Buffer overflow | ⏳ Closed – needs PoC |
-| Apple XNU | TOCTOU | ⏳ Under review |
-| Qualcomm | Deadlock | ✅ Acknowledged |
-| Google Android (atomisp) | Integer overflow + missing checks | ✅ Submitted |
+- How to read and understand hardware datasheets
+- How to communicate with Arduino using low‑level code
+- How to find hidden functionalities in consumer devices
+- How to work with professional repairmen for delicate hardware tasks
+- How to learn from failures and keep moving forward
 
 ---
 
-## 🧠 Why I Do This
+## ⚠️ Disclaimer
 
-I believe that **security is a right, not a privilege**.  
-I have no fancy hardware, no expensive tools – just a curious mind and a lot of persistence.
+> This is a **personal research project** for learning and fun.  
+> Hardware manipulation is risky and may permanently damage the device.  
+> I do this for educational purposes only.
 
-If I can find bugs with a 2‑GB RAM laptop, so can you.
+---
 
-**Stay curious. Stay kind.**
+## 📬 Contact
 
-— **Daniel Baradaran**  
-🔗 [GitHub](https://github.com/danieldevir) · 
+**Daniel Baradaran**  
+🔗 [GitHub](https://github.com/danieldevir) ·
 📧 daniel.ir.dev@gmail.com
+
+---
+
+*Stay curious. Stay kind.* 🌟
